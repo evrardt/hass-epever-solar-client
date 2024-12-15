@@ -12,8 +12,9 @@ arch:
 startup: services
 options:
   server:
-    host: '0.0.0.0'
-    port: 15002
+    - name: epever
+      host: 192.168.88.78
+      port: 9999
   mqtt:
     host: 'homeassistant.local'
     port: 1883
@@ -23,8 +24,9 @@ options:
     debug: false
 schema:
   server:
-    host: str
-    port: int(0,65535)
+    - name: str
+      host: str
+      port: int(0,65535)
   mqtt:
     host: str
     port: int(0,65535)

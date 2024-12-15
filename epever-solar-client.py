@@ -1,3 +1,5 @@
+"""Epever solar client"""
+
 import sys
 import datetime
 import os
@@ -9,7 +11,7 @@ import signal
 import time
 from datetime import timedelta
 
-import paho.mqtt.client as mqtt
+import paho.mqtt.publish as mqtt
 
 from pymodbus.client import ModbusTcpClient
 from pymodbus.transaction import ModbusRtuFramer as ModbusFramer
@@ -27,22 +29,24 @@ root.addHandler(handler)
 
 logger: logging.Logger = logging.getLogger('epever-solar-client')
 
-# --------------------------------------------------------------
-
 
 def value32(low, high):
+    """value32"""
     return ctypes.c_int(low + (high << 16)).value / 100
 
 
 def value16(value):
+    """value16"""
     return ctypes.c_short(value).value / 100
 
 
 def value8(value):
+    """value8"""
     return [value >> 8, value & 0xFF]
 
 
-def toBool(value):
+def to_bool(value):
+    """to_bool"""
     values = {
         0: False,
         1: True
@@ -51,44 +55,70 @@ def toBool(value):
 
 
 def days(value):
-    return "{} Days".format(value)
+    """days"""
+    return f"Days {value}"
 
 
 def minutes(value):
-    return "{} Minutes".format(value)
+    """minutes"""
+    return f"Minutes {value}"
 
 
 def seconds(value):
-    return "{} Seconds".format(value)
+    """seconds"""
+    return f"Seconds {value}"
 
 
-def hourMinute(value):
+def hour_minute(value):
+    """hour_minute"""
     hm = value8(value)
-    return "{0} hours {1} minutes".format(hm[0], hm[1])
+    return f"{hm[0]} hours {hm[1]} minutes"
 
 
-def getTime(second, minute, hour):
+def get_time(second, minute, hour):
+    """get_time"""
     return datetime.time(hour, minute, second)
 
 
-def toFloat(low, high=None):
+def to_float(low, high=None):
+    """to_float"""
     if high is None:
         return value16(low)
     else:
         return value32(low, high)
-# --------------------------------------------------------------
 
 
-def log_info(info, *arguments):
-    if len(arguments) == 0:
-        logger.info(info)
-    elif len(arguments) == 1:
-        logger.info(info + "%s" % arguments)
-    else:
-        logger.info(info + ' %r', arguments)
+class MQTTPublisher:
+    """MQTT publisher"""
+    mqtt_host = '127.0.0.1'
+    mqtt_port = 1883
+
+    mqtt_user = ''
+    mqtt_pass = ''
+    mqtt_topic = ''
+
+    def __init__(self, host, port, user, passwd, topic):
+        self.mqtt_host = host
+        self.mqtt_port = port
+        self.mqtt_user = user
+        self.mqtt_pass = passwd
+        self.mqtt_topic = topic
+
+    def publish(self, device_id: str, event_name: str, event: object):
+        """Publish event"""
+        auth_data = None
+        if (self.mqtt_user and self.mqtt_pass):
+            auth_data = {'username': self.mqtt_user,
+                         'password': self.mqtt_pass}
+
+        payload = json.dumps(event)
+        topic = self.mqtt_topic + f"/{device_id}/{event_name}"
+        mqtt.single(topic=topic, payload=payload, retain=False,
+                    hostname=self.mqtt_host, port=self.mqtt_port, auth=auth_data, tls=None)
 
 
 class EpeverSolarClient:
+    """EpeverSolarClient"""
     _host = "192.168.88.78"
     _port = 9999
 
@@ -97,58 +127,61 @@ class EpeverSolarClient:
         self._port = port
 
     def get_device_info(self, client):
+        """get_device"""
         request = ReadDeviceInformationRequest(slave=1)
         response = client.execute(request)
-        if (not response.isError()):
+        if not response.isError():
             result = []
             for idx in response.information:
                 result.append(response.information[idx].decode("ascii"))
             return result
-        else:
-            logger.error(response)
-            return None
+
+        logger.error(response)
+        return None
 
     def init_clock(self, client):
+        """init_clock"""
         print("Updating Device RTC...")
         result = client.read_holding_registers(0x9013, 3, slave=1)
-        if (not result.isError()):
-            print("... Date({}, {}, {}, {}, {}, {})".format(
-                2000 + (result.registers[2] >> 8),
-                result.registers[2] & 0xFF,
-                result.registers[1] >> 8,
-                result.registers[1] & 0xFF,
-                result.registers[0] >> 8,
-                result.registers[0] & 0xFF
-            ))
+        if not result.isError():
+            logger.info("Date(%s, %s, %s, %s, %s, %s)",
+                        2000 + (result.registers[2] >> 8),
+                        result.registers[2] & 0xFF,
+                        result.registers[1] >> 8,
+                        result.registers[1] & 0xFF,
+                        result.registers[0] >> 8,
+                        result.registers[0] & 0xFF)
 
-            now = datetime.now()
-            newData = [0, 0, 0]
-            newData[2] = ((now.year - 2000) << 8) + now.month
-            newData[1] = (now.day << 8) + now.hour
-            newData[0] = (now.minute << 8) + now.second
-            print("... Date({}, {}, {}, {}, {}, {})".format(
-                2000 + (newData[2] >> 8),
-                newData[2] & 0xFF,
-                newData[1] >> 8,
-                newData[1] & 0xFF,
-                newData[0] >> 8,
-                newData[0] & 0xFF
-            ))
-            result = client.write_registers(0x9013, newData, slave=1)
-            if (not result.isError()):
+            now = datetime.datetime.now()
+            new_data = [0, 0, 0]
+            new_data[2] = ((now.year - 2000) << 8) + now.month
+            new_data[1] = (now.day << 8) + now.hour
+            new_data[0] = (now.minute << 8) + now.second
+            logger.info("Date(%s, %s, %s, %s, %s, %s)",
+                        2000 + (new_data[2] >> 8),
+                        new_data[2] & 0xFF,
+                        new_data[1] >> 8,
+                        new_data[1] & 0xFF,
+                        new_data[0] >> 8,
+                        new_data[0] & 0xFF)
+
+            result = client.write_registers(0x9013, new_data, slave=1)
+            if not result.isError():
                 print("Err:", "Updating Device RTC")
             else:
                 print("Device RTC Updated.")
 
     def init_settings(self, client, settings):
+        """init_settings"""
         print("Configuring battery setting...")
         result = client.write_registers(0x9000, settings, slave=1)
-        if (not result.isError()):
+        if not result.isError():
             print("Battery setting done.")
         else:
             print("Err:", "Battery setting")
 
     def configure_battery(self, client):
+        """configure_battery"""
         # Bosch T5 077 6-СТ 180Ah L+ 1000A 0092T50770
         # 12v / 180 Ah
 
@@ -173,31 +206,32 @@ class EpeverSolarClient:
         self.init_settings(client, settings)
 
     def get_battery_settings(self, client):
+        """get_battery_settings"""
         settings = {}
         result = client.read_holding_registers(0x9000, 15, slave=1)
-        if (not result.isError()):
-            batteryType = {
+        if not result.isError():
+            battery_type = {
                 0: "User defined",
                 1: "Sealed",
                 2: "GEL",
                 3: "Flooded"
             }
-            settings["batteryType"] = batteryType.get(result.registers[0])
+            settings["batteryType"] = battery_type.get(result.registers[0])
             settings["batteryCapacity"] = result.registers[1]
-            settings["temperatureCompensationCoefficient"] = toFloat(
+            settings["temperatureCompensationCoefficient"] = to_float(
                 result.registers[2])
-            settings["highVoltDisconnect"] = toFloat(result.registers[3])
-            settings["chargingLimitVoltage"] = toFloat(result.registers[4])
-            settings["overVoltageReconnect"] = toFloat(result.registers[5])
-            settings["equalizationVoltage"] = toFloat(result.registers[6])
-            settings["boostVoltage"] = toFloat(result.registers[7])
-            settings["floatVoltage"] = toFloat(result.registers[8])
-            settings["boostReconnectVoltage"] = toFloat(result.registers[9])
-            settings["lowVoltageReconnect"] = toFloat(result.registers[10])
-            settings["underVoltageRecover"] = toFloat(result.registers[11])
-            settings["underVoltageWarning"] = toFloat(result.registers[12])
-            settings["lowVoltageDisconnect"] = toFloat(result.registers[13])
-            settings["dischargingLimitVoltage"] = toFloat(
+            settings["highVoltDisconnect"] = to_float(result.registers[3])
+            settings["chargingLimitVoltage"] = to_float(result.registers[4])
+            settings["overVoltageReconnect"] = to_float(result.registers[5])
+            settings["equalizationVoltage"] = to_float(result.registers[6])
+            settings["boostVoltage"] = to_float(result.registers[7])
+            settings["floatVoltage"] = to_float(result.registers[8])
+            settings["boostReconnectVoltage"] = to_float(result.registers[9])
+            settings["lowVoltageReconnect"] = to_float(result.registers[10])
+            settings["underVoltageRecover"] = to_float(result.registers[11])
+            settings["underVoltageWarning"] = to_float(result.registers[12])
+            settings["lowVoltageDisconnect"] = to_float(result.registers[13])
+            settings["dischargingLimitVoltage"] = to_float(
                 result.registers[14])
         else:
             logger.error(result)
@@ -206,59 +240,59 @@ class EpeverSolarClient:
         return settings
 
     def get_battery_load(self, client):
+        """get_battery_load"""
         result = client.read_input_registers(0x310C, 4, slave=1)
-        if (not result.isError()):
-            loadVoltage = toFloat(result.registers[0])
-            loadCurrent = toFloat(result.registers[1])
-            loadPower = toFloat(result.registers[2], result.registers[3])
-            all = {}
-            all["loadVoltage"] = loadVoltage
-            all["loadCurrent"] = loadCurrent
-            all["loadPower"] = loadPower
+        if not result.isError():
+            all_data = {}
+            all_data["loadVoltage"] = to_float(result.registers[0])
+            all_data["loadCurrent"] = to_float(result.registers[1])
+            all_data["loadPower"] = to_float(
+                result.registers[2], result.registers[3])
 
-            return all
+            return all_data
         else:
             logger.error(result)
             return None
 
     def get_data(self, client):
+        """get_data"""
         data = {}
 
         result = client.read_input_registers(0x3100, 19, slave=1)
-        if (not result.isError()):
-            data["chargingInputVoltage"] = toFloat(result.registers[0])
-            data["chargingInputCurrent"] = toFloat(result.registers[1])
-            data["chargingInputPower"] = toFloat(
+        if not result.isError():
+            data["chargingInputVoltage"] = to_float(result.registers[0])
+            data["chargingInputCurrent"] = to_float(result.registers[1])
+            data["chargingInputPower"] = to_float(
                 result.registers[2], result.registers[3])
 
-            data["chargingOutputVoltage"] = toFloat(result.registers[4])
-            data["chargingOutputCurrent"] = toFloat(result.registers[5])
-            data["chargingOutputPower"] = toFloat(
+            data["chargingOutputVoltage"] = to_float(result.registers[4])
+            data["chargingOutputCurrent"] = to_float(result.registers[5])
+            data["chargingOutputPower"] = to_float(
                 result.registers[6], result.registers[7])
 
-            data["dischargingOutputVoltage"] = toFloat(result.registers[12])
-            data["dischargingOutputVurrent"] = toFloat(result.registers[13])
-            data["dischargingOutputPower"] = toFloat(
+            data["dischargingOutputVoltage"] = to_float(result.registers[12])
+            data["dischargingOutputVurrent"] = to_float(result.registers[13])
+            data["dischargingOutputPower"] = to_float(
                 result.registers[14], result.registers[15])
 
-            data["batteryTemperature"] = toFloat(result.registers[16])
-            data["temperatureInside"] = toFloat(result.registers[17])
-            data["powerComponentsTemperature"] = toFloat(result.registers[18])
+            data["batteryTemperature"] = to_float(result.registers[16])
+            data["temperatureInside"] = to_float(result.registers[17])
+            data["powerComponentsTemperature"] = to_float(result.registers[18])
         else:
             logger.error(result)
             return None
 
         result = client.read_input_registers(0x311A, 2, slave=1)
-        if (not result.isError()):
-            data["batterySoC"] = toFloat(result.registers[0]) * 100
-            data["remoteBatteryTemperature"] = toFloat(result.registers[1])
+        if not result.isError():
+            data["batterySoC"] = to_float(result.registers[0]) * 100
+            data["remoteBatteryTemperature"] = to_float(result.registers[1])
         else:
             logger.error(result)
             return None
 
         result = client.read_input_registers(0x311D, 1, slave=1)
-        if (not result.isError()):
-            data["batteryRealRatedPower"] = toFloat(result.registers[0])
+        if not result.isError():
+            data["batteryRealRatedPower"] = to_float(result.registers[0])
         else:
             logger.error(result)
             return None
@@ -266,180 +300,186 @@ class EpeverSolarClient:
         return data
 
     def get_battery_stat(self, client):
+        """get_battery_stat"""
         result = client.read_input_registers(0x3300, 31, slave=1)
-        if (not result.isError()):
+        if not result.isError():
             stat = {}
-            stat["maxVoltToday"] = toFloat(result.registers[0])
-            stat["minVoltToday"] = toFloat(result.registers[1])
-            stat["maxBatteryVoltToday"] = toFloat(result.registers[2])
-            stat["minBatteryVoltToday"] = toFloat(result.registers[3])
-            stat["consumedEnergyToday"] = toFloat(
+            stat["maxVoltToday"] = to_float(result.registers[0])
+            stat["minVoltToday"] = to_float(result.registers[1])
+            stat["maxBatteryVoltToday"] = to_float(result.registers[2])
+            stat["minBatteryVoltToday"] = to_float(result.registers[3])
+            stat["consumedEnergyToday"] = to_float(
                 result.registers[4], result.registers[5])
-            stat["consumedEnergyMonth"] = toFloat(
+            stat["consumedEnergyMonth"] = to_float(
                 result.registers[6], result.registers[7])
-            stat["consumedEnergyYear"] = toFloat(
+            stat["consumedEnergyYear"] = to_float(
                 result.registers[8], result.registers[9])
-            stat["totalConsumedEnergy"] = toFloat(
+            stat["totalConsumedEnergy"] = to_float(
                 result.registers[10], result.registers[11])
-            stat["generatedEnergyToday"] = toFloat(
+            stat["generatedEnergyToday"] = to_float(
                 result.registers[12], result.registers[13])
-            stat["generatedEnergyMonth"] = toFloat(
+            stat["generatedEnergyMonth"] = to_float(
                 result.registers[14], result.registers[15])
-            stat["generatedEnergyYear"] = toFloat(
+            stat["generatedEnergyYear"] = to_float(
                 result.registers[16], result.registers[17])
-            stat["totalGeneratedEnergy"] = toFloat(
+            stat["totalGeneratedEnergy"] = to_float(
                 result.registers[18], result.registers[19])
-            stat["carbonDioxideReduction"] = toFloat(
+            stat["carbonDioxideReduction"] = to_float(
                 result.registers[20], result.registers[21])
-            stat["batteryVoltage"] = toFloat(result.registers[26])
-            stat["batteryCurrent"] = toFloat(
+            stat["batteryVoltage"] = to_float(result.registers[26])
+            stat["batteryCurrent"] = to_float(
                 result.registers[27], result.registers[28])
-            stat["batteryTemperature"] = toFloat(result.registers[29])
-            stat["ambientTemperature"] = toFloat(result.registers[30])
+            stat["batteryTemperature"] = to_float(result.registers[29])
+            stat["ambientTemperature"] = to_float(result.registers[30])
             return stat
         else:
             logger.error(result)
             return None
 
     def get_battery_status(self, client):
+        """get_battery_status"""
         result = client.read_input_registers(0x3200, 3, slave=1)
-        if (not result.isError()):
+        if not result.isError():
             value = result.registers[0]
-            batteryStatusVoltage = {
+            battery_status_voltage = {
                 0: "Normal",
                 1: "Overvolt",
                 2: "Under volt",
                 3: "Low Volt Disconnect",
                 4: "Fault"
             }
-            batteryStatusTemperature = {
+            battery_status_temperature = {
                 0: "Normal",
                 1: "Over Temperature",
                 2: "Low Temperature"
             }
-            abnormalStatus = {
+            abnormal_status = {
                 0: "Normal",
                 1: "Abnormal"
             }
-            wrongStatus = {
+            wrong_status = {
                 0: "Correct",
                 1: "Wrong"
             }
-            batteryStatus = {}
-            batteryStatus["voltage"] = batteryStatusVoltage.get(
+            battery_status = {}
+            battery_status["voltage"] = battery_status_voltage.get(
                 value & 0x0007, None)
-            batteryStatus["temperature"] = batteryStatusTemperature.get(
+            battery_status["temperature"] = battery_status_temperature.get(
                 (value >> 4) & 0x000f, None)
-            batteryStatus["internalResistance"] = abnormalStatus.get(
+            battery_status["internalResistance"] = abnormal_status.get(
                 (value >> 8) & 0x0001, None)
-            batteryStatus["ratedVoltage"] = wrongStatus.get(
+            battery_status["ratedVoltage"] = wrong_status.get(
                 (value >> 15) & 0x0001, None)
 
             value = result.registers[1]
-            chargingEquipmentStatusInputVoltage = {
+            charging_equipment_status_input_voltage = {
                 0: "Normal",
                 1: "No power connected",
                 2: "Higher Volt Input",
                 3: "Input Volt Error"
             }
-            chargingEquipmentStatusBattery = {
+            charging_equipment_status_battery = {
                 0: "Not charging",
                 1: "Float",
                 2: "Boost",
                 3: "Equalization"
             }
-            faultStatus = {
+            fault_status = {
                 0: "Normal",
                 1: "Fault"
             }
-            runningStatus = {
+            running_status = {
                 0: "Standby",
                 1: "Running"
             }
 
-            equipmentStatus = {}
-            equipmentStatus["inputVoltage"] = chargingEquipmentStatusInputVoltage.get(
+            equipment_status = {}
+            equipment_status["inputVoltage"] = charging_equipment_status_input_voltage.get(
                 (value >> 14) & 0x0003, None)
-            equipmentStatus["mosfetShort"] = toBool((value >> 13) & 0x0001)
-            equipmentStatus["chargingAntiReverseMosfetShort"] = toBool(
+            equipment_status["mosfetShort"] = to_bool((value >> 13) & 0x0001)
+            equipment_status["chargingAntiReverseMosfetShort"] = to_bool(
                 (value >> 12) & 0x0001)
-            equipmentStatus["antiReverseMosfetShort"] = toBool(
+            equipment_status["antiReverseMosfetShort"] = to_bool(
                 (value >> 11) & 0x0001)
-            equipmentStatus["inputOverCurrent"] = toBool(
+            equipment_status["inputOverCurrent"] = to_bool(
                 (value >> 10) & 0x0001)
-            equipmentStatus["loadOverCurrent"] = toBool((value >> 9) & 0x0001)
-            equipmentStatus["loadShort"] = toBool((value >> 8) & 0x0001)
-            equipmentStatus["loadMosfetShort"] = toBool((value >> 7) & 0x0001)
-            equipmentStatus["pvInputShort"] = toBool((value >> 4) & 0x0001)
-            equipmentStatus["battery"] = chargingEquipmentStatusBattery.get(
+            equipment_status["loadOverCurrent"] = to_bool(
+                (value >> 9) & 0x0001)
+            equipment_status["loadShort"] = to_bool((value >> 8) & 0x0001)
+            equipment_status["loadMosfetShort"] = to_bool(
+                (value >> 7) & 0x0001)
+            equipment_status["pvInputShort"] = to_bool((value >> 4) & 0x0001)
+            equipment_status["battery"] = charging_equipment_status_battery.get(
                 (value >> 2) & 0x0003, None)
-            equipmentStatus["fault"] = faultStatus.get(
+            equipment_status["fault"] = fault_status.get(
                 (value >> 1) & 0x0001, None)
-            equipmentStatus["running"] = runningStatus.get(
+            equipment_status["running"] = running_status.get(
                 (value) & 0x0001, None)
 
             value = result.registers[2]
-            dischargingEquipmentStatusVoltage = {
+            discharging_equipment_status_voltage = {
                 0: "Normal",
                 1: "Low",
                 2: "High",
                 3: "No access input volt error"
             }
-            dischargingEquipmentStatusOutput = {
+            discharging_equipment_status_output = {
                 0: "Light Load",
                 1: "Moderate",
                 2: "Rated",
                 3: "Overload"
             }
-            dischargingEquipmentStatus = {}
+            discharging_equipment_status = {}
 
-            dischargingEquipmentStatus["inputVoltage"] = dischargingEquipmentStatusVoltage.get(
+            discharging_equipment_status["inputVoltage"] = discharging_equipment_status_voltage.get(
                 (value >> 14) & 0x0003, None)
-            dischargingEquipmentStatus["outputPower"] = dischargingEquipmentStatusOutput.get(
+            discharging_equipment_status["outputPower"] = discharging_equipment_status_output.get(
                 (value >> 12) & 0x0003, None)
-            dischargingEquipmentStatus["shortCircuit"] = toBool(
+            discharging_equipment_status["shortCircuit"] = to_bool(
                 (value >> 11) & 0x0001)
-            dischargingEquipmentStatus["unableDischarge"] = toBool(
+            discharging_equipment_status["unableDischarge"] = to_bool(
                 (value >> 10) & 0x0001)
-            dischargingEquipmentStatus["unableStopDischarging"] = toBool(
+            discharging_equipment_status["unableStopDischarging"] = to_bool(
                 (value >> 9) & 0x0001)
-            dischargingEquipmentStatus["outputVoltageAbnormal"] = toBool(
+            discharging_equipment_status["outputVoltageAbnormal"] = to_bool(
                 (value >> 8) & 0x0001)
-            dischargingEquipmentStatus["inputOverpressure"] = toBool(
+            discharging_equipment_status["inputOverpressure"] = to_bool(
                 (value >> 7) & 0x0001)
-            dischargingEquipmentStatus["highVoltageSideShortCircuit"] = toBool(
+            discharging_equipment_status["highVoltageSideShortCircuit"] = to_bool(
                 (value >> 6) & 0x0001)
-            dischargingEquipmentStatus["boostOverpressure"] = toBool(
+            discharging_equipment_status["boostOverpressure"] = to_bool(
                 (value >> 5) & 0x0001)
-            dischargingEquipmentStatus["outputOverpressure"] = toBool(
+            discharging_equipment_status["outputOverpressure"] = to_bool(
                 (value >> 4) & 0x0001)
 
-            dischargingEquipmentStatus["fault"] = faultStatus.get(
+            discharging_equipment_status["fault"] = fault_status.get(
                 (value >> 1) & 0x0001, None)
-            dischargingEquipmentStatus["running"] = runningStatus.get(
+            discharging_equipment_status["running"] = running_status.get(
                 value & 0x0001, None)
 
-            return {"batteryStatus": batteryStatus, "equipmentStatus": equipmentStatus, "dischargingEquipmentStatus": dischargingEquipmentStatus}
+            return {"batteryStatus": battery_status, "equipmentStatus": equipment_status,
+                    "dischargingEquipmentStatus": discharging_equipment_status}
         else:
             logger.error(result)
             return None
 
     def run(self, method='get_data'):
+        """run"""
         client = ModbusTcpClient(
             self._host, port=self._port, framer=ModbusFramer, retries=5)
 
-        log_info("Running method {}".format(method))
+        logger.info('Running method: %s', method)
         try:
             success = client.connect()
             if not success:
-                log_info("Cannot connect to Epever server")
+                logger.error("Cannot connect to Epever server")
                 return None
 
             client.send(bytes.fromhex("20020000"))
             run_method = getattr(EpeverSolarClient, method)
             return run_method(self, client)
 
-        except BaseException as e:
+        except Exception as e:
             logger.error(e)
 
         finally:
@@ -447,12 +487,15 @@ class EpeverSolarClient:
 
 
 class Configurator:
+    """Configurator"""
     config = {}
 
     def __init__(self, config):
+        """init"""
         self.config = config
 
     def get(self, path, default=None):
+        """get"""
         items = path.split(':')
         value = None
 
@@ -466,11 +509,15 @@ class Configurator:
 
 
 class ProgramKilled(Exception):
-    pass
+    """ProgramKilled"""
+    logger.info("Program terminated.")
 
 
 class Job(threading.Thread):
+    """Job"""
+
     def __init__(self, interval, *args, **kwargs):
+        """init"""
         threading.Thread.__init__(self)
         self.daemon = False
         self.stopped = threading.Event()
@@ -479,48 +526,44 @@ class Job(threading.Thread):
         self.kwargs = kwargs
         self.init = True
 
-    def publish(self, publisher, event_name, event):
-        base_topic = publisher._userdata.get("base_topic")
-        publisher.publish(base_topic+"/" + event_name,
-                          payload=json.dumps(event))
-        log_info("EVENT:", event)
-
-    def execute(self, publisher, epever_client):
+    def execute(self, publisher: MQTTPublisher, epever_client: EpeverSolarClient,
+                device_id: str):
+        """execute"""
         if self.init:
             data = epever_client.run("get_device_info")
             if data is not None:
-                self.publish(publisher, "info", data)
+                publisher.publish(device_id, "info", data)
             else:
                 logger.error("get_device_info")
 
             data = epever_client.run("get_battery_settings")
             if data is not None:
-                self.publish(publisher, "settings", data)
+                publisher.publish(device_id, "settings", data)
             else:
                 logger.error("get_battery_settings")
 
         data = epever_client.run("get_data")
         if data is not None:
-            self.publish(publisher, "data", data)
+            publisher.publish(device_id, "data", data)
         else:
             logger.error("get_data")
 
         if datetime.datetime.now().minute % 5 == 0 or self.init:
             data = epever_client.run("get_battery_stat")
             if data is not None:
-                self.publish(publisher, "stat", data)
+                publisher.publish(device_id, "stat", data)
             else:
                 logger.error("get_battery_stat")
 
             data = epever_client.run("get_battery_status")
             if data is not None:
-                self.publish(publisher, "status", data)
+                publisher.publish(device_id, "status", data)
             else:
                 logger.error("get_battery_status")
 
             data = epever_client.run("get_battery_load")
             if data is not None:
-                self.publish(publisher, "load", data)
+                publisher.publish(device_id, "load", data)
             else:
                 logger.error("get_battery_load")
 
@@ -528,10 +571,12 @@ class Job(threading.Thread):
             self.init = False
 
     def stop(self):
+        """stop"""
         self.stopped.set()
         self.join()
 
     def run(self):
+        """run"""
         self.execute(*self.args, **self.kwargs)
         # looping
         while not self.stopped.wait(self.interval.total_seconds()):
@@ -542,95 +587,71 @@ WAIT_TIME_SECONDS = 60
 
 
 def signal_handler(signum, frame):
+    """signal_handler"""
     raise ProgramKilled
 
 
-def on_connect(client, userdata, flags, rc):
-    base_topic = userdata.get("base_topic")
-    client.subscribe(base_topic + "/" + "event" + "/#")
-
-
-def on_message(client, userdata, msg):
-    request = msg.payload.decode("ascii")
-    event_name = request.split("_")[-1]
-    epever_client = userdata.get("epever_client")
-
-    data = epever_client.run(request)
-    if data is not None:        
-        base_topic = userdata.get("base_topic")
-        client.publish(base_topic+"/" + event_name,
-                          payload=json.dumps(data))
-    else:
-        logger.error(str(msg.payload))
-
-    # print(msg.topic+" "+str(msg.payload))
-
-
 def main():
-    log_info("Epever solar client started...")
+    """main"""
+    logger.info("Epever solar client started...")
 
-    HOST, PORT = '0.0.0.0', 15002
-
-    MQTT_HOST = "localhost"
-    MQTT_PORT = 1883
-    MQTT_USER = ""
-    MQTT_PASSWD = ""
+    mqtt_host = "localhost"
+    mqtt_port = 1883
+    mqtt_user = ""
+    mqtt_pass = ""
 
     config = None
     if os.path.exists('./epever-solar-client.json'):
-        log_info('Running in local mode')
-        fp = open('./epever-solar-client.json', 'r')
-        config = Configurator(json.load(fp))
-        fp.close()
+        logger.info('Running in local mode')
+        with open('./epever-solar-client.json', 'r', encoding="utf-8") as fp:
+            config = Configurator(json.load(fp))
+            fp.close()
     elif os.path.exists('/data/options.json'):
-        log_info('Running in hass.io add-on mode')
-        fp = open('/data/options.json', 'r')
-        config = Configurator(json.load(fp))
-        fp.close()
+        logger.info('Running in hass.io add-on mode')
+        with open('/data/options.json', 'r', encoding="utf-8") as fp:
+            config = Configurator(json.load(fp))
+            fp.close()
     else:
-        log_info('Configuration file not found, exiting.')
+        logger.info('Configuration file not found, exiting.')
         sys.exit(1)
 
     if config.get('mqtt:debug'):
-        log_info("Debugging messages enabled")
+        logger.info("Debugging messages enabled")
         # MQTT_DEBUG = True
 
     if config.get('mqtt:username') and config.get('mqtt:password'):
-        MQTT_USER = config.get('mqtt:username')
-        MQTT_PASSWD = config.get('mqtt:password')
+        mqtt_user = config.get('mqtt:username')
+        mqtt_pass = config.get('mqtt:password')
 
-    MQTT_HOST = config.get('mqtt:host', MQTT_HOST)
-    MQTT_PORT = config.get('mqtt:port', MQTT_PORT)
+    mqtt_host = config.get('mqtt:host', mqtt_host)
+    mqtt_port = config.get('mqtt:port', mqtt_port)
 
-    HOST = config.get('server:host', HOST)
-    PORT = config.get('server:port', PORT)
-
-    device_id = "epever"
     mqtt_topic = config.get('mqtt:topic', "epever/epever-solar")
-    base_topic = mqtt_topic + '/{}'.format(device_id)
-
-    publisher = mqtt.Client()
-    epever_client = EpeverSolarClient(HOST, PORT)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    job = Job(interval=timedelta(seconds=WAIT_TIME_SECONDS),
-              publisher=publisher, epever_client=epever_client)
-    job.start()
+    publisher = MQTTPublisher(mqtt_host, mqtt_port,
+                              mqtt_user, mqtt_pass, mqtt_topic)
 
-    publisher.on_connect = on_connect
-    publisher.on_message = on_message
+    servers = config.get("server")
+    for server in servers:
+        host, port = '0.0.0.0', 15002
+        device_id = "epever"
 
-    publisher.username_pw_set(username=MQTT_USER, password=MQTT_PASSWD)
+        device_id = server.get('name', device_id)
+        host = server.get('host', host)
+        port = server.get('port', port)
 
-    publisher.user_data_set(
-        {"base_topic": base_topic, "epever_client": epever_client})
-    publisher.connect(MQTT_HOST, MQTT_PORT, 60)
+        epever_client = EpeverSolarClient(host, port)
 
-    publisher.loop_start()
+        job = Job(interval=timedelta(seconds=WAIT_TIME_SECONDS),
+                  publisher=publisher,
+                  epever_client=epever_client,
+                  device_id=device_id)
+        job.start()
 
-    log_info("Running...")
+    logger.info("Running...")
     while True:
         try:
             time.sleep(1)
@@ -638,9 +659,6 @@ def main():
             print("Program killed: running cleanup code")
             job.stop()
             break
-
-    publisher.disconnect()
-    publisher.loop_stop()
 
 
 if __name__ == "__main__":
