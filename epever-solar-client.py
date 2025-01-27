@@ -128,7 +128,7 @@ class EpeverSolarClient:
 
     def get_device_info(self, client):
         """get_device"""
-        request = ReadDeviceInformationRequest(slave=1)
+        request = ReadDeviceInformationRequest(slave=10)
         response = client.execute(request)
         if not response.isError():
             result = []
@@ -142,7 +142,7 @@ class EpeverSolarClient:
     def init_clock(self, client):
         """init_clock"""
         print("Updating Device RTC...")
-        result = client.read_holding_registers(0x9013, 3, slave=1)
+        result = client.read_holding_registers(0x9013, 3, slave=10)
         if not result.isError():
             logger.info("Date(%s, %s, %s, %s, %s, %s)",
                         2000 + (result.registers[2] >> 8),
@@ -165,7 +165,7 @@ class EpeverSolarClient:
                         new_data[0] >> 8,
                         new_data[0] & 0xFF)
 
-            result = client.write_registers(0x9013, new_data, slave=1)
+            result = client.write_registers(0x9013, new_data, slave=10)
             if not result.isError():
                 print("Err:", "Updating Device RTC")
             else:
@@ -174,7 +174,7 @@ class EpeverSolarClient:
     def init_settings(self, client, settings):
         """init_settings"""
         print("Configuring battery setting...")
-        result = client.write_registers(0x9000, settings, slave=1)
+        result = client.write_registers(0x9000, settings, slave=10)
         if not result.isError():
             print("Battery setting done.")
         else:
@@ -208,7 +208,7 @@ class EpeverSolarClient:
     def get_battery_settings(self, client):
         """get_battery_settings"""
         settings = {}
-        result = client.read_holding_registers(0x9000, 15, slave=1)
+        result = client.read_holding_registers(0x9000, 15, slave=10)
         if not result.isError():
             battery_type = {
                 0: "User defined",
@@ -241,7 +241,7 @@ class EpeverSolarClient:
 
     def get_battery_load(self, client):
         """get_battery_load"""
-        result = client.read_input_registers(0x310C, 4, slave=1)
+        result = client.read_input_registers(0x310C, 4, slave=10)
         if not result.isError():
             all_data = {}
             all_data["loadVoltage"] = to_float(result.registers[0])
@@ -258,7 +258,7 @@ class EpeverSolarClient:
         """get_data"""
         data = {}
 
-        result = client.read_input_registers(0x3100, 19, slave=1)
+        result = client.read_input_registers(0x3100, 19, slave=10)
         if not result.isError():
             data["chargingInputVoltage"] = to_float(result.registers[0])
             data["chargingInputCurrent"] = to_float(result.registers[1])
@@ -282,7 +282,7 @@ class EpeverSolarClient:
             logger.error(result)
             return None
 
-        result = client.read_input_registers(0x311A, 2, slave=1)
+        result = client.read_input_registers(0x311A, 2, slave=10)
         if not result.isError():
             data["batterySoC"] = to_float(result.registers[0]) * 100
             data["remoteBatteryTemperature"] = to_float(result.registers[1])
@@ -290,7 +290,7 @@ class EpeverSolarClient:
             logger.error(result)
             return None
 
-        result = client.read_input_registers(0x311D, 1, slave=1)
+        result = client.read_input_registers(0x311D, 1, slave=10)
         if not result.isError():
             data["batteryRealRatedPower"] = to_float(result.registers[0])
         else:
@@ -301,7 +301,7 @@ class EpeverSolarClient:
 
     def get_battery_stat(self, client):
         """get_battery_stat"""
-        result = client.read_input_registers(0x3300, 31, slave=1)
+        result = client.read_input_registers(0x3300, 31, slave=10)
         if not result.isError():
             stat = {}
             stat["maxVoltToday"] = to_float(result.registers[0])
@@ -338,7 +338,7 @@ class EpeverSolarClient:
 
     def get_battery_status(self, client):
         """get_battery_status"""
-        result = client.read_input_registers(0x3200, 3, slave=1)
+        result = client.read_input_registers(0x3200, 3, slave=10)
         if not result.isError():
             value = result.registers[0]
             battery_status_voltage = {
